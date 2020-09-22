@@ -72,6 +72,7 @@
             curl
             bzip2 xz brotli zlib editline
             openssl pkgconfig sqlite
+
             libarchive
             boost
             (if lib.versionAtLeast lib.version "20.03pre"
@@ -84,6 +85,9 @@
             mercurial
             jq
             gmock
+
+            # kha deps
+            graphviz moreutils
           ]
           ++ lib.optionals stdenv.isLinux [libseccomp utillinuxMinimal]
           ++ lib.optional (stdenv.isLinux || stdenv.isDarwin) libsodium
@@ -421,7 +425,7 @@
         stdenv.mkDerivation {
           name = "nix";
 
-          buildInputs = buildDeps ++ propagatedDeps ++ perlDeps;
+          buildInputs = buildDeps ++ propagatedDeps ++ perlDeps ++ [ bear bashInteractive ];
 
           inherit configureFlags;
 

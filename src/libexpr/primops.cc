@@ -4,6 +4,7 @@
 #include "eval.hh"
 #include "globals.hh"
 #include "json-to-value.hh"
+#include "logging.hh"
 #include "names.hh"
 #include "store-api.hh"
 #include "util.hh"
@@ -564,6 +565,11 @@ static void prim_derivationStrict(EvalState & state, const Pos & pos, Value * * 
         throw;
     }
 
+    Activity act(*logger, lvlChatty, actTopLevelEval,
+                 fmt("derivation '%s' being evaled", drvName),
+                 Logger::Fields{});
+    PushActivity pact(act.id);
+
     /* Check whether attributes should be passed as a JSON file. */
     std::ostringstream jsonBuf;
     std::unique_ptr<JSONObject> jsonObject;
@@ -843,6 +849,7 @@ static void prim_derivationStrict(EvalState & state, const Pos & pos, Value * * 
     auto drvPathS = state.store->printStorePath(drvPath);
 
     printMsg(lvlChatty, "instantiated '%1%' -> '%2%'", drvName, drvPathS);
+    act.result(resProduced, Logger::Field{drvPathS});
 
     /* Optimisation, but required in read-only mode! because in that
        case we don't actually write store derivations, so we can't

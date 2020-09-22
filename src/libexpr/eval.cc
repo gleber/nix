@@ -814,7 +814,11 @@ void EvalState::evalFile(const Path & path_, Value & v, bool mustBeTrivial)
         return;
     }
 
-    printTalkative("evaluating file '%1%'", path2);
+    Activity act(*logger, lvlTalkative, actTopLevelEval,
+                 fmt("evaluating file '%s'", path2),
+                 Logger::Fields{});
+    PushActivity pact(act.id);
+
     Expr * e = nullptr;
 
     auto j = fileParseCache.find(path2);
@@ -1748,17 +1752,21 @@ string EvalState::copyPathToStore(PathSet & context, const Path & path)
     if (nix::isDerivation(path))
         throwEvalError("file names are not allowed to end in '%1%'", drvExtension);
 
+    Activity act(*logger, lvlInfo, actEval, "copying referenced file", Logger::Fields{path});
+
     Path dstPath;
     auto i = srcToStore.find(path);
     if (i != srcToStore.end())
         dstPath = store->printStorePath(i->second);
     else {
+        act.result(resConsumed, Logger::Fields{path});
         auto p = settings.readOnlyMode
             ? store->computeStorePathForPath(std::string(baseNameOf(path)), checkSourcePath(path)).first
             : store->addToStore(std::string(baseNameOf(path)), checkSourcePath(path), FileIngestionMethod::Recursive, htSHA256, defaultPathFilter, repair);
         dstPath = store->printStorePath(p);
         srcToStore.insert_or_assign(path, std::move(p));
         printMsg(lvlChatty, "copied source '%1%' -> '%2%'", path, dstPath);
+        act.result(resProduced, Logger::Fields{dstPath});
     }
 
     context.insert(dstPath);

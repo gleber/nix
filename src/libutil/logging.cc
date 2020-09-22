@@ -172,6 +172,7 @@ struct JSONLogger : Logger {
         json["action"] = "msg";
         json["level"] = lvl;
         json["msg"] = fs.s;
+        json["id"] = getCurActivity();
         write(json);
     }
 
@@ -184,7 +185,7 @@ struct JSONLogger : Logger {
         json["action"] = "msg";
         json["level"] = ei.level;
         json["msg"] = oss.str();
-
+        json["id"] = getCurActivity();
         write(json);
     }
 
@@ -197,6 +198,9 @@ struct JSONLogger : Logger {
         json["level"] = lvl;
         json["type"] = type;
         json["text"] = s;
+        if (parent != 0) {
+            json["parent"] = parent;
+        }
         addFields(json, fields);
         // FIXME: handle parent
         write(json);

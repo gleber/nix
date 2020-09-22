@@ -866,6 +866,8 @@ private:
 
     std::unique_ptr<MaintainCount<uint64_t>> mcExpectedBuilds, mcRunningBuilds;
 
+    std::unique_ptr<Activity> overallAct;
+
     std::unique_ptr<Activity> act;
 
     /* Activity that denotes waiting for a lock. */
@@ -1033,6 +1035,10 @@ DerivationGoal::DerivationGoal(const StorePath & drvPath, const StringSet & want
     name = fmt("building of '%s'", worker.store.printStorePath(this->drvPath));
     trace("created");
 
+    auto msg = fmt("overall building '%s'", worker.store.printStorePath(this->drvPath));
+    overallAct = std::make_unique<Activity>(*logger, lvlInfo, actBuild, msg,
+        Logger::Fields{worker.store.printStorePath(drvPath), "", curRound, nrRounds});
+
     mcExpectedBuilds = std::make_unique<MaintainCount<uint64_t>>(worker.expectedBuilds);
     worker.updateProgress();
 }
@@ -1049,6 +1055,10 @@ DerivationGoal::DerivationGoal(const StorePath & drvPath, const BasicDerivation 
     state = &DerivationGoal::haveDerivation;
     name = fmt("building of %s", worker.store.showPaths(drv.outputPaths(worker.store)));
     trace("created");
+
+    auto msg = fmt("overall building '%s'", worker.store.printStorePath(this->drvPath));
+    overallAct = std::make_unique<Activity>(*logger, lvlInfo, actBuild, msg,
+        Logger::Fields{worker.store.printStorePath(drvPath), "", curRound, nrRounds});
 
     mcExpectedBuilds = std::make_unique<MaintainCount<uint64_t>>(worker.expectedBuilds);
     worker.updateProgress();
@@ -1179,16 +1189,24 @@ void DerivationGoal::haveDerivation()
 {
     trace("have derivation");
 
+    overallAct->result(resConsumed, Logger::Fields{worker.store.printStorePath(this->drvPath)});
+
     retrySubstitution = false;
 
-    for (auto & i : drv->outputsAndPaths(worker.store))
+    for (auto & i : drv->outputsAndPaths(worker.store)) {
         worker.store.addTempRoot(i.second.second);
+        if (worker.store.isValidPath(i.second.second)) {
+            // Do not mark it as consumed if it does not exist to avoid confisuing rountrip arrows.
+            overallAct->result(resConsumed, Logger::Fields{worker.store.printStorePath(i.second.second)});
+        }
+    }
 
     /* Check what outputs paths are not already valid. */
     auto invalidOutputs = checkPathValidity(false, buildMode == bmRepair);
 
     /* If they are all valid, then we're done. */
     if (invalidOutputs.size() == 0 && buildMode == bmNormal) {
+        trace("already valid");
         done(BuildResult::AlreadyValid);
         return;
     }
@@ -1375,6 +1393,7 @@ void DerivationGoal::inputsRealised()
                `i' as input paths.  Only add the closures of output paths
                that are specified as inputs. */
             assert(worker.store.isValidPath(i.first));
+            overallAct->result(resConsumed, Logger::Fields{worker.store.printStorePath(i.first)});
             Derivation inDrv = worker.store.derivationFromPath(i.first);
             for (auto & j : i.second) {
                 auto k = inDrv.outputs.find(j);
@@ -1389,6 +1408,9 @@ void DerivationGoal::inputsRealised()
 
     /* Second, the input sources. */
     worker.store.computeFSClosure(drv->inputSrcs, inputPaths);
+
+    for (auto & p : inputPaths)
+        overallAct->result(resConsumed, Logger::Fields{worker.store.printStorePath(p)});
 
     debug("added input paths %s", worker.store.showPaths(inputPaths));
 
@@ -1417,7 +1439,7 @@ void DerivationGoal::started() {
     fmt("building '%s'", worker.store.printStorePath(drvPath));
     if (hook) msg += fmt(" on '%s'", machineName);
     act = std::make_unique<Activity>(*logger, lvlInfo, actBuild, msg,
-        Logger::Fields{worker.store.printStorePath(drvPath), hook ? machineName : "", curRound, nrRounds});
+        Logger::Fields{worker.store.printStorePath(drvPath), hook ? machineName : "", curRound, nrRounds}, overallAct->id);
     mcRunningBuilds = std::make_unique<MaintainCount<uint64_t>>(worker.runningBuilds);
     worker.updateProgress();
 }
@@ -1951,7 +1973,7 @@ void linkOrCopy(const Path & from, const Path & to)
            file (e.g. 32000 of ext3), which is quite possible after a
            'nix-store --optimise'. FIXME: actually, why don't we just
            bind-mount in this case?
-           
+
            It can also fail with EPERM in BeegFS v7 and earlier versions
            which don't allow hard-links to other directories */
         if (errno != EMLINK && errno != EPERM)
@@ -1978,6 +2000,7 @@ void DerivationGoal::startBuilder()
 #if __APPLE__
     additionalSandboxProfile = parsedDrv->getStringAttr("__sandboxProfile").value_or("");
 #endif
+
 
     /* Are we doing a chroot build? */
     {
@@ -3811,7 +3834,7 @@ void DerivationGoal::registerOutputs()
            contained in it.  Compute the SHA-256 NAR hash at the same
            time.  The hash is stored in the database so that we can
            verify later on whether nobody has messed with the store. */
-        debug("scanning for references inside '%1%'", path);
+        debug("scanning for references inside XXX '%1%'", path);
         // HashResult hash;
         auto pathSetAndHash = scanForReferences(actualPath, worker.store.printStorePathSet(referenceablePaths));
         auto references = worker.store.parseStorePathSet(pathSetAndHash.first);
@@ -3850,14 +3873,15 @@ void DerivationGoal::registerOutputs()
 
             continue;
         }
+        debug("blah for '%1%'", actualPath);
 
         /* For debugging, print out the referenced and unreferenced paths. */
         for (auto & i : inputPaths) {
             auto j = references.find(i);
             if (j == references.end())
-                debug("unreferenced input: '%1%'", worker.store.printStorePath(i));
+                debug("unreferenced input XXX: '%1%'", worker.store.printStorePath(i));
             else
-                debug("referenced input: '%1%'", worker.store.printStorePath(i));
+                debug("referenced input XXX: '%1%'", worker.store.printStorePath(i));
         }
 
         if (curRound == nrRounds) {
@@ -3876,6 +3900,8 @@ void DerivationGoal::registerOutputs()
         info.ca = ca;
         worker.store.signPathInfo(info);
 
+        overallAct->result(resProduced, Logger::Fields{worker.store.printStorePath(info.path)});
+
         if (!info.references.empty()) {
             // FIXME don't we have an experimental feature for fixed output with references?
             info.ca = {};
@@ -3888,6 +3914,7 @@ void DerivationGoal::registerOutputs()
 
     /* Apply output checks. */
     checkOutputs(infos);
+    debug("outputs checked");
 
     /* Compare the result with the previous round, and report which
        path is different, if any.*/
@@ -3954,6 +3981,7 @@ void DerivationGoal::registerOutputs()
     {
         ValidPathInfos infos2;
         for (auto & i : infos) infos2.push_back(i.second);
+
         worker.store.registerValidPaths(infos2);
     }
 

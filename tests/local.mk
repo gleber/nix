@@ -4,7 +4,8 @@ nix_tests = \
   gc.sh \
   gc-concurrent.sh \
   gc-auto.sh \
-  referrers.sh user-envs.sh logging.sh nix-build.sh misc.sh fixed.sh \
+	logging.sh logging-json.sh \
+  referrers.sh user-envs.sh nix-build.sh misc.sh fixed.sh \
   gc-runtime.sh check-refs.sh filter-source.sh \
   local-store.sh remote-store.sh export.sh export-graph.sh \
   timeout.sh secure-drv-outputs.sh nix-channel.sh \
