@@ -5,6 +5,7 @@
 #include <sstream>
 #include <vector>
 
+#include "error.hh"
 #include "store-api.hh"
 #include "globals.hh"
 #include "derivations.hh"
@@ -244,6 +245,10 @@ static void _main(int argc, char * * argv)
     if (packages && fromArgs)
         throw UsageError("'-p' and '-E' are mutually exclusive");
 
+    Activity mainAct(*logger, lvlTalkative, actTopLevelBuild, "_main",
+                     Logger::Fields{});
+    PushActivity pact(mainAct.id);
+
     auto store = openStore();
 
     auto state = std::make_unique<EvalState>(myArgs.searchPath, store);
@@ -284,27 +289,39 @@ static void _main(int argc, char * * argv)
     /* Parse the expressions. */
     std::vector<Expr *> exprs;
 
-    if (readStdin)
-        exprs = {state->parseStdin()};
-    else
-        for (auto i : left) {
-            if (fromArgs)
-                exprs.push_back(state->parseExprFromString(i, absPath(".")));
-            else {
-                auto absolute = i;
-                try {
-                    absolute = canonPath(absPath(i), true);
-                } catch (Error & e) {};
-                auto [path, outputNames] = parsePathWithOutputs(absolute);
-                if (store->isStorePath(path) && hasSuffix(path, ".drv"))
-                    drvs.push_back(DrvInfo(*state, store, absolute));
-                else
-                    /* If we're in a #! script, interpret filenames
-                       relative to the script. */
-                    exprs.push_back(state->parseExprFromFile(resolveExprPath(state->checkSourcePath(lookupFileArg(*state,
-                                        inShebang && !packages ? absPath(i, absPath(dirOf(script))) : i)))));
+    {
+        Activity evalAct(*logger, lvlTalkative, actTopLevelEval, "_main.eval",
+                         Logger::Fields{});
+        PushActivity pact(evalAct.id);
+
+        if (readStdin)
+            exprs = {state->parseStdin()};
+        else
+            for (auto i : left) {
+                if (fromArgs)
+                    exprs.push_back(
+                        state->parseExprFromString(i, absPath(".")));
+                else {
+                    auto absolute = i;
+                    try {
+                        absolute = canonPath(absPath(i), true);
+                    } catch (Error &e) {
+                    };
+                    auto [path, outputNames] = parsePathWithOutputs(absolute);
+                    if (store->isStorePath(path) && hasSuffix(path, ".drv"))
+                        drvs.push_back(DrvInfo(*state, store, absolute));
+                    else
+                        /* If we're in a #! script, interpret filenames
+                           relative to the script. */
+                        exprs.push_back(
+                            state->parseExprFromFile(resolveExprPath(
+                                state->checkSourcePath(lookupFileArg(
+                                    *state,
+                                    inShebang && !packages
+                                        ? absPath(i, absPath(dirOf(script)))
+                                        : i)))));
+                }
             }
-        }
 
     /* Evaluate them into derivations. */
     if (attrPaths.empty()) attrPaths = {""};
@@ -318,6 +335,8 @@ static void _main(int argc, char * * argv)
             state->forceValue(v);
             getDerivations(*state, v, "", *autoArgs, drvs, false);
         }
+    }
+
     }
 
     state->printStats();
@@ -485,21 +504,26 @@ static void _main(int argc, char * * argv)
 
     else {
 
+        Activity act(*logger, lvlTalkative, actTopLevelBuild, fmt("preparing build of %d derivations", drvs.size()), Logger::Fields{});
+        PushActivity pact(act.id);
+
         std::vector<StorePathWithOutputs> pathsToBuild;
 
         std::map<Path, Path> drvPrefixes;
         std::map<Path, Path> resultSymlinks;
         std::vector<Path> outPaths;
 
-        for (auto & drvInfo : drvs) {
+        for (auto &drvInfo : drvs) {
             auto drvPath = drvInfo.queryDrvPath();
             auto outPath = drvInfo.queryOutPath();
 
             auto outputName = drvInfo.queryOutputName();
             if (outputName == "")
-                throw Error("derivation '%s' lacks an 'outputName' attribute", drvPath);
+                throw Error("derivation '%s' lacks an 'outputName' attribute",
+                            drvPath);
 
-            pathsToBuild.push_back({store->parseStorePath(drvPath), {outputName}});
+            pathsToBuild.push_back(
+                {store->parseStorePath(drvPath), {outputName}});
 
             std::string drvPrefix;
             auto i = drvPrefixes.find(drvPath);
@@ -513,13 +537,20 @@ static void _main(int argc, char * * argv)
             }
 
             std::string symlink = drvPrefix;
-            if (outputName != "out") symlink += "-" + outputName;
+            if (outputName != "out")
+                symlink += "-" + outputName;
 
             resultSymlinks[symlink] = outPath;
             outPaths.push_back(outPath);
         }
 
-        buildPaths(pathsToBuild);
+        {
+            Activity act(*logger, lvlTalkative, actTopLevelBuild,
+                         fmt("building %d paths", pathsToBuild.size()),
+                         Logger::Fields{});
+            PushActivity pact(act.id);
+            buildPaths(pathsToBuild);
+        }
 
         if (dryRun) return;
 

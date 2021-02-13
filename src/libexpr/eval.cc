@@ -814,7 +814,11 @@ void EvalState::evalFile(const Path & path_, Value & v, bool mustBeTrivial)
         return;
     }
 
-    printTalkative("evaluating file '%1%'", path2);
+    Activity act(*logger, lvlTalkative, actTopLevelEval,
+                 fmt("evaluating file '%s'", path2),
+                 Logger::Fields{});
+    PushActivity pact(act.id);
+
     Expr * e = nullptr;
 
     auto j = fileParseCache.find(path2);
